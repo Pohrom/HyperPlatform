@@ -33,11 +33,6 @@ extern "C" {
 
 static PROCESSOR_CALLBACK_FUNCTION HotplugCallbackpCallbackRoutine;
 
-#if defined(ALLOC_PRAGMA)
-#pragma alloc_text(INIT, HotplugCallbackInitialization)
-#pragma alloc_text(PAGE, HotplugCallbackTermination)
-#pragma alloc_text(PAGE, HotplugCallbackpCallbackRoutine)
-#endif
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -53,7 +48,6 @@ static PVOID g_hpp_callback_handle = nullptr;
 
 // Registers power callback
 _Use_decl_annotations_ NTSTATUS HotplugCallbackInitialization() {
-  PAGED_CODE();
 
   auto callback_handle = KeRegisterProcessorChangeCallback(
       HotplugCallbackpCallbackRoutine, nullptr, 0);
@@ -67,7 +61,6 @@ _Use_decl_annotations_ NTSTATUS HotplugCallbackInitialization() {
 
 // Unregister power callback
 _Use_decl_annotations_ void HotplugCallbackTermination() {
-  PAGED_CODE();
 
   if (g_hpp_callback_handle) {
     KeDeregisterProcessorChangeCallback(g_hpp_callback_handle);
@@ -77,7 +70,6 @@ _Use_decl_annotations_ void HotplugCallbackTermination() {
 _Use_decl_annotations_ static void HotplugCallbackpCallbackRoutine(
     PVOID callback_context, PKE_PROCESSOR_CHANGE_NOTIFY_CONTEXT change_context,
     PNTSTATUS operation_status) {
-  PAGED_CODE();
   UNREFERENCED_PARAMETER(callback_context);
   UNREFERENCED_PARAMETER(operation_status);
 

@@ -129,18 +129,6 @@ static bool LogpIsPrinted(_In_z_ char *message);
 
 static void LogpDbgBreak();
 
-#if defined(ALLOC_PRAGMA)
-#pragma alloc_text(INIT, LogInitialization)
-#pragma alloc_text(INIT, LogpInitializeBufferInfo)
-#pragma alloc_text(PAGE, LogpInitializeLogFile)
-#pragma alloc_text(INIT, LogRegisterReinitialization)
-#pragma alloc_text(PAGE, LogpReinitializationRoutine)
-#pragma alloc_text(PAGE, LogIrpShutdownHandler)
-#pragma alloc_text(PAGE, LogTermination)
-#pragma alloc_text(PAGE, LogpFinalizeBufferInfo)
-#pragma alloc_text(PAGE, LogpBufferFlushThreadRoutine)
-#pragma alloc_text(PAGE, LogpSleep)
-#endif
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -171,7 +159,6 @@ static LogBufferInfo g_logp_log_buffer_info = {};
 
 _Use_decl_annotations_ NTSTATUS
 LogInitialization(ULONG flag, const wchar_t *log_file_path) {
-  PAGED_CODE();
 
   auto status = STATUS_SUCCESS;
 
@@ -211,7 +198,6 @@ Fail:;
 // Initialize a log file related code such as a flushing thread.
 _Use_decl_annotations_ static NTSTATUS LogpInitializeBufferInfo(
     const wchar_t *log_file_path, LogBufferInfo *info) {
-  PAGED_CODE();
   NT_ASSERT(log_file_path);
   NT_ASSERT(info);
 
@@ -272,7 +258,6 @@ _Use_decl_annotations_ static NTSTATUS LogpInitializeBufferInfo(
 // Initializes a log file and starts a log buffer thread.
 _Use_decl_annotations_ static NTSTATUS LogpInitializeLogFile(
     LogBufferInfo *info) {
-  PAGED_CODE();
 
   if (info->log_file_handle) {
     return STATUS_SUCCESS;
@@ -318,7 +303,6 @@ _Use_decl_annotations_ static NTSTATUS LogpInitializeLogFile(
 // Registers LogpReinitializationRoutine() for re-initialization.
 _Use_decl_annotations_ void LogRegisterReinitialization(
     PDRIVER_OBJECT driver_object) {
-  PAGED_CODE();
   IoRegisterBootDriverReinitialization(
       driver_object, LogpReinitializationRoutine, &g_logp_log_buffer_info);
   HYPERPLATFORM_LOG_INFO("The log file will be activated later.");
@@ -327,7 +311,6 @@ _Use_decl_annotations_ void LogRegisterReinitialization(
 // Initializes a log file at the re-initialization phase.
 _Use_decl_annotations_ VOID static LogpReinitializationRoutine(
     _DRIVER_OBJECT *driver_object, PVOID context, ULONG count) {
-  PAGED_CODE();
   UNREFERENCED_PARAMETER(driver_object);
   UNREFERENCED_PARAMETER(count);
   NT_ASSERT(context);
@@ -342,7 +325,6 @@ _Use_decl_annotations_ VOID static LogpReinitializationRoutine(
 
 // Terminates the log functions without releasing resources.
 _Use_decl_annotations_ void LogIrpShutdownHandler() {
-  PAGED_CODE();
 
   HYPERPLATFORM_LOG_DEBUG("Flushing... (Max log usage = %Iu/%lu bytes)",
                           g_logp_log_buffer_info.log_max_usage,
@@ -359,7 +341,6 @@ _Use_decl_annotations_ void LogIrpShutdownHandler() {
 
 // Terminates the log functions.
 _Use_decl_annotations_ void LogTermination() {
-  PAGED_CODE();
 
   HYPERPLATFORM_LOG_DEBUG("Finalizing... (Max log usage = %Iu/%lu bytes)",
                           g_logp_log_buffer_info.log_max_usage,
@@ -371,7 +352,6 @@ _Use_decl_annotations_ void LogTermination() {
 
 // Terminates a log file related code.
 _Use_decl_annotations_ static void LogpFinalizeBufferInfo(LogBufferInfo *info) {
-  PAGED_CODE();
   NT_ASSERT(info);
 
   // Closing the log buffer flush thread.
@@ -767,7 +747,6 @@ _Use_decl_annotations_ static bool LogpIsLogNeeded(ULONG level) {
 // flushes a log buffer to a log file every kLogpLogFlushIntervalMsec msec.
 _Use_decl_annotations_ static VOID LogpBufferFlushThreadRoutine(
     void *start_context) {
-  PAGED_CODE();
   auto status = STATUS_SUCCESS;
   auto info = reinterpret_cast<LogBufferInfo *>(start_context);
   info->buffer_flush_thread_started = true;
@@ -791,7 +770,6 @@ _Use_decl_annotations_ static VOID LogpBufferFlushThreadRoutine(
 
 // Sleep the current thread's execution for milliseconds.
 _Use_decl_annotations_ static NTSTATUS LogpSleep(LONG millisecond) {
-  PAGED_CODE();
 
   LARGE_INTEGER interval = {};
   interval.QuadPart = -(10000ll * millisecond);  // msec

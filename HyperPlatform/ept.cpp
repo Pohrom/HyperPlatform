@@ -139,11 +139,6 @@ static void EptpFreeUnusedPreAllocatedEntries(
     _Pre_notnull_ __drv_freesMem(Mem) EptCommonEntry **preallocated_entries,
     _In_ long used_count);
 
-#if defined(ALLOC_PRAGMA)
-#pragma alloc_text(PAGE, EptIsEptAvailable)
-#pragma alloc_text(PAGE, EptInitialization)
-#pragma alloc_text(PAGE, EptInitializeMtrrEntries)
-#endif
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -160,7 +155,6 @@ static UCHAR g_eptp_mtrr_default_type;
 
 // Checks if the system supports EPT technology sufficient enough
 _Use_decl_annotations_ bool EptIsEptAvailable() {
-  PAGED_CODE();
 
   // Check the followings:
   // - page walk length is 4 steps
@@ -190,7 +184,6 @@ _Use_decl_annotations_ ULONG64 EptGetEptPointer(EptData *ept_data) {
 
 // Reads and stores all MTRRs to set a correct memory type for EPT
 _Use_decl_annotations_ void EptInitializeMtrrEntries() {
-  PAGED_CODE();
 
   int index = 0;
   MtrrData *mtrr_entries = g_eptp_mtrr_entries;
@@ -396,7 +389,6 @@ _Use_decl_annotations_ static memory_type EptpGetMemoryType(
 
 // Builds EPT, allocates pre-allocated entires, initializes and returns EptData
 _Use_decl_annotations_ EptData *EptInitialization() {
-  PAGED_CODE();
 
   static const auto kEptPageWalkLevel = 4ul;
 

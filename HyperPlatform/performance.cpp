@@ -33,10 +33,6 @@ static PerfCollector::InitialOutputRoutine PerfpInitialOutputRoutine;
 static PerfCollector::OutputRoutine PerfpOutputRoutine;
 static PerfCollector::FinalOutputRoutine PerfpFinalOutputRoutine;
 
-#if defined(ALLOC_PRAGMA)
-#pragma alloc_text(INIT, PerfInitialization)
-#pragma alloc_text(PAGE, PerfTermination)
-#endif
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -51,7 +47,6 @@ PerfCollector* g_performance_collector;
 //
 
 _Use_decl_annotations_ NTSTATUS PerfInitialization() {
-  PAGED_CODE();
   auto status = STATUS_SUCCESS;
 
   const auto perf_collector =
@@ -71,7 +66,6 @@ _Use_decl_annotations_ NTSTATUS PerfInitialization() {
 }
 
 _Use_decl_annotations_ void PerfTermination() {
-  PAGED_CODE();
 
   if (g_performance_collector) {
     g_performance_collector->Terminate();

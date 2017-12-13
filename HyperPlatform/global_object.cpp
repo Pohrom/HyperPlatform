@@ -47,11 +47,6 @@ struct DestructorEntry {
 // prototypes
 //
 
-#if defined(ALLOC_PRAGMA)
-#pragma alloc_text(INIT, GlobalObjectInitialization)
-#pragma alloc_text(INIT, atexit)
-#pragma alloc_text(PAGE, GlobalObjectTermination)
-#endif
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -73,7 +68,6 @@ static SINGLE_LIST_ENTRY g_gop_dtors_list_head = {};
 
 // Calls all constructors and register all destructor
 _Use_decl_annotations_ NTSTATUS GlobalObjectInitialization() {
-  PAGED_CODE();
 
   // Call all constructors
   for (auto ctor = g_gop_ctors_begin + 1; ctor < g_gop_ctors_end; ++ctor) {
@@ -84,7 +78,6 @@ _Use_decl_annotations_ NTSTATUS GlobalObjectInitialization() {
 
 // Calls all registered destructors
 _Use_decl_annotations_ void GlobalObjectTermination() {
-  PAGED_CODE();
 
   auto entry = PopEntryList(&g_gop_dtors_list_head);
   while (entry) {
@@ -97,7 +90,6 @@ _Use_decl_annotations_ void GlobalObjectTermination() {
 
 // Registers destructor; this is called through a call to constructor
 _IRQL_requires_max_(PASSIVE_LEVEL) int __cdecl atexit(_In_ Destructor dtor) {
-  PAGED_CODE();
 
   const auto element =
       reinterpret_cast<DestructorEntry *>(ExAllocatePoolWithTag(

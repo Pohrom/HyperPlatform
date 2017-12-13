@@ -420,13 +420,10 @@ _Use_decl_annotations_ static void VmmpHandleCpuid(
   __cpuidex(reinterpret_cast<int *>(cpu_info), function_id, sub_function_id);
 
   if (function_id == 1) {
-    // Present existence of a hypervisor using the HypervisorPresent bit
+    // Don't present existence of a hypervisor using the HypervisorPresent bit
     CpuFeaturesEcx cpu_features = {static_cast<ULONG_PTR>(cpu_info[2])};
-    cpu_features.fields.not_used = true;
+	cpu_features.fields.not_used = false;
     cpu_info[2] = static_cast<int>(cpu_features.all);
-  } else if (function_id == kHyperVCpuidInterface) {
-    // Leave signature of HyperPlatform onto EAX
-    cpu_info[0] = 'PpyH';
   }
 
   guest_context->gp_regs->ax = cpu_info[0];

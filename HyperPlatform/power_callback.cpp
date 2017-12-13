@@ -33,11 +33,6 @@ extern "C" {
 
 static CALLBACK_FUNCTION PowerCallbackpCallbackRoutine;
 
-#if defined(ALLOC_PRAGMA)
-#pragma alloc_text(INIT, PowerCallbackInitialization)
-#pragma alloc_text(PAGE, PowerCallbackTermination)
-#pragma alloc_text(PAGE, PowerCallbackpCallbackRoutine)
-#endif
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -54,7 +49,6 @@ static PVOID g_pcp_registration = nullptr;
 
 // Registers power callback
 _Use_decl_annotations_ NTSTATUS PowerCallbackInitialization() {
-  PAGED_CODE();
 
   UNICODE_STRING name = RTL_CONSTANT_STRING(L"\\Callback\\PowerState");
   OBJECT_ATTRIBUTES oa =
@@ -77,7 +71,6 @@ _Use_decl_annotations_ NTSTATUS PowerCallbackInitialization() {
 
 // Unregister power callback
 _Use_decl_annotations_ void PowerCallbackTermination() {
-  PAGED_CODE();
 
   if (g_pcp_registration) {
     ExUnregisterCallback(g_pcp_registration);
@@ -91,7 +84,6 @@ _Use_decl_annotations_ void PowerCallbackTermination() {
 _Use_decl_annotations_ static void PowerCallbackpCallbackRoutine(
     PVOID callback_context, PVOID argument1, PVOID argument2) {
   UNREFERENCED_PARAMETER(callback_context);
-  PAGED_CODE();
 
   HYPERPLATFORM_LOG_DEBUG("PowerCallback %p:%p", argument1, argument2);
 

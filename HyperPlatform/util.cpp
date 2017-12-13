@@ -91,17 +91,6 @@ static HardwarePte *UtilpAddressToPde(_In_ const void *address);
 
 static HardwarePte *UtilpAddressToPte(_In_ const void *address);
 
-#if defined(ALLOC_PRAGMA)
-#pragma alloc_text(INIT, UtilInitialization)
-#pragma alloc_text(PAGE, UtilTermination)
-#pragma alloc_text(INIT, UtilpInitializePageTableVariables)
-#pragma alloc_text(INIT, UtilpInitializeRtlPcToFileHeader)
-#pragma alloc_text(INIT, UtilpInitializePhysicalMemoryRanges)
-#pragma alloc_text(INIT, UtilpBuildPhysicalMemoryRanges)
-#pragma alloc_text(PAGE, UtilForEachProcessor)
-#pragma alloc_text(PAGE, UtilSleep)
-#pragma alloc_text(PAGE, UtilGetSystemProcAddress)
-#endif
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -140,7 +129,6 @@ static ULONG_PTR g_utilp_pti_mask = 0;
 // Initializes utility functions
 _Use_decl_annotations_ NTSTATUS
 UtilInitialization(PDRIVER_OBJECT driver_object) {
-  PAGED_CODE();
 
   auto status = UtilpInitializePageTableVariables();
   HYPERPLATFORM_LOG_DEBUG("PXE at %016Ix, PPE at %016Ix, PDE at %016Ix, PTE at %016Ix",
@@ -168,7 +156,6 @@ UtilInitialization(PDRIVER_OBJECT driver_object) {
 
 // Terminates utility functions
 _Use_decl_annotations_ void UtilTermination() {
-  PAGED_CODE();
 
   if (g_utilp_physical_memory_ranges) {
     ExFreePoolWithTag(g_utilp_physical_memory_ranges,
@@ -178,7 +165,6 @@ _Use_decl_annotations_ void UtilTermination() {
 
 // Initializes g_utilp_p*e_base, g_utilp_p*i_shift and g_utilp_p*i_mask.
 _Use_decl_annotations_ static NTSTATUS UtilpInitializePageTableVariables() {
-  PAGED_CODE();
 
 #include "util_page_constants.h"  // Include platform dependent constants
 
@@ -268,7 +254,6 @@ _Use_decl_annotations_ static NTSTATUS UtilpInitializePageTableVariables() {
 // Locates RtlPcToFileHeader
 _Use_decl_annotations_ static NTSTATUS UtilpInitializeRtlPcToFileHeader(
     PDRIVER_OBJECT driver_object) {
-  PAGED_CODE();
 
   if (kUtilpUseRtlPcToFileHeader) {
     const auto p_RtlPcToFileHeader =
@@ -321,7 +306,6 @@ _Use_decl_annotations_ void *UtilPcToFileHeader(void *pc_value) {
 
 // Initializes the physical memory ranges
 _Use_decl_annotations_ static NTSTATUS UtilpInitializePhysicalMemoryRanges() {
-  PAGED_CODE();
 
   const auto ranges = UtilpBuildPhysicalMemoryRanges();
   if (!ranges) {
@@ -348,7 +332,6 @@ _Use_decl_annotations_ static NTSTATUS UtilpInitializePhysicalMemoryRanges() {
 // Builds the physical memory ranges
 _Use_decl_annotations_ static PhysicalMemoryDescriptor *
 UtilpBuildPhysicalMemoryRanges() {
-  PAGED_CODE();
 
   const auto pm_ranges = MmGetPhysicalMemoryRanges();
   if (!pm_ranges) {
@@ -410,7 +393,6 @@ UtilGetPhysicalMemoryRanges() {
 // to call remaining callbacks and returns the value.
 _Use_decl_annotations_ NTSTATUS
 UtilForEachProcessor(NTSTATUS (*callback_routine)(void *), void *context) {
-  PAGED_CODE();
 
   const auto number_of_processors =
       KeQueryActiveProcessorCountEx(ALL_PROCESSOR_GROUPS);
@@ -475,7 +457,6 @@ UtilForEachProcessorDpc(PKDEFERRED_ROUTINE deferred_routine, void *context) {
 
 // Sleep the current thread's execution for Millisecond milliseconds.
 _Use_decl_annotations_ NTSTATUS UtilSleep(LONG Millisecond) {
-  PAGED_CODE();
 
   LARGE_INTEGER interval = {};
   interval.QuadPart = -(10000 * Millisecond);  // msec
@@ -501,7 +482,6 @@ _Use_decl_annotations_ void *UtilMemMem(const void *search_base,
 // A wrapper of MmGetSystemRoutineAddress
 _Use_decl_annotations_ void *UtilGetSystemProcAddress(
     const wchar_t *proc_name) {
-  PAGED_CODE();
 
   UNICODE_STRING proc_name_U = {};
   RtlInitUnicodeString(&proc_name_U, proc_name);
