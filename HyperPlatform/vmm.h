@@ -1,4 +1,4 @@
-// Copyright (c) 2015-2016, tandasat. All rights reserved.
+// Copyright (c) 2015-2017, Satoshi Tanda. All rights reserved.
 // Use of this source code is governed by a MIT-style license that can be
 // found in the LICENSE file.
 
@@ -41,9 +41,6 @@ struct ProcessorData {
   struct VmControlStructure* vmxon_region;  //!< VA of a VMXON region
   struct VmControlStructure* vmcs_region;   //!< VA of a VMCS region
   struct EptData* ept_data;                 //!< A pointer to EPT related data
-  void* xsave_area;                         //!< VA to store state components
-  ULONG64 xsave_inst_mask;                  //!< A mask to save state components
-  UCHAR fxsave_area[512 + 16];              //!< for fxsave (+16 for alignment)
   struct ShadowHookData* sh_data;           //!< Per-processor shadow hook data
 };
 

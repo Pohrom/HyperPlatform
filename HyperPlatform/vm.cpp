@@ -1,4 +1,4 @@
-// Copyright (c) 2015-2016, tandasat. All rights reserved.
+// Copyright (c) 2015-2017, Satoshi Tanda. All rights reserved.
 // Use of this source code is governed by a MIT-style license that can be
 // found in the LICENSE file.
 
@@ -37,9 +37,6 @@ extern "C" {
 //
 // prototypes
 //
-
-_IRQL_requires_max_(PASSIVE_LEVEL) NTSYSAPI ULONG64 NTAPI
-    RtlGetEnabledExtendedFeatures(_In_ ULONG64 FeatureMask);
 
 _IRQL_requires_max_(PASSIVE_LEVEL) static bool VmpIsVmxAvailable();
 
@@ -160,6 +157,9 @@ _Use_decl_annotations_ NTSTATUS VmInitialization() {
   if (!shared_data) {
     return STATUS_MEMORY_NOT_ALLOCATED;
   }
+
+  // Read and store all MTRRs to set a correct memory type for EPT
+  EptInitializeMtrrEntries();
 
   // Virtualize all processors
   auto status = UtilForEachProcessor(VmpStartVm, shared_data);
@@ -397,44 +397,6 @@ _Use_decl_annotations_ static void VmpInitializeVm(
     goto ReturnFalse;
   }
 
-  // Check if XSAVE/XRSTOR are available and save an instruction mask for all
-  // supported user state components
-  processor_data->xsave_inst_mask =
-      RtlGetEnabledExtendedFeatures(static_cast<ULONG64>(-1));
-  HYPERPLATFORM_LOG_DEBUG("xsave_inst_mask       = %p",
-                          processor_data->xsave_inst_mask);
-  if (processor_data->xsave_inst_mask) {
-    // Allocate a large enough XSAVE area to store all supported user state
-    // components. A size is round-up to multiple of the page size so that the
-    // address fulfills a requirement of 64K alignment.
-    //
-    // See: ENUMERATION OF CPU SUPPORT FOR XSAVE INSTRUCTIONS AND XSAVESUPPORTED
-    // FEATURES
-    int cpu_info[4] = {};
-    __cpuidex(cpu_info, 0xd, 0);
-    const auto xsave_area_size = ROUND_TO_PAGES(cpu_info[2]);  // ecx
-    processor_data->xsave_area = ExAllocatePoolWithTag(
-        NonPagedPool, xsave_area_size, kHyperPlatformCommonPoolTag);
-    if (!processor_data->xsave_area) {
-      goto ReturnFalse;
-    }
-    RtlZeroMemory(processor_data->xsave_area, xsave_area_size);
-  } else {
-    // Use FXSAVE/FXRSTOR instead.
-    int cpu_info[4] = {};
-    __cpuid(cpu_info, 1);
-    const CpuFeaturesEcx cpu_features_ecx = {static_cast<ULONG32>(cpu_info[2])};
-    const CpuFeaturesEdx cpu_features_edx = {static_cast<ULONG32>(cpu_info[3])};
-    if (cpu_features_ecx.fields.avx) {
-      HYPERPLATFORM_LOG_ERROR("A processor supports AVX but not XSAVE/XRSTOR.");
-      goto ReturnFalse;
-    }
-    if (!cpu_features_edx.fields.fxsr) {
-      HYPERPLATFORM_LOG_ERROR("A processor does not support FXSAVE/FXRSTOR.");
-      goto ReturnFalse;
-    }
-  }
-
   processor_data->sh_data = ShAllocateShadowHookData();
   if (!processor_data->sh_data) {
     goto ReturnFalse;
@@ -468,10 +430,10 @@ _Use_decl_annotations_ static void VmpInitializeVm(
   //
   // (High)
   // +------------------+  <- vmm_stack_region_base      (eg, AED37000)
-  // | processor_data   |
-  // +------------------+  <- vmm_stack_data             (eg, AED36FFC)
-  // | MAXULONG_PTR     |
-  // +------------------+  <- vmm_stack_base (initial SP)(eg, AED36FF8)
+  // | processor_data   |  <- vmm_stack_data             (eg, AED36FFC)
+  // +------------------+
+  // | MAXULONG_PTR     |  <- vmm_stack_base (initial SP)(eg, AED36FF8)
+  // +------------------+    v
   // |                  |    v
   // | (VMM Stack)      |    v (grow)
   // |                  |    v
@@ -484,13 +446,15 @@ _Use_decl_annotations_ static void VmpInitializeVm(
   const auto vmm_stack_base = vmm_stack_data - sizeof(void *);
   HYPERPLATFORM_LOG_DEBUG("vmm_stack_limit       = %p",
                           processor_data->vmm_stack_limit);
-  HYPERPLATFORM_LOG_DEBUG("vmm_stack_region_base = %p", vmm_stack_region_base);
-  HYPERPLATFORM_LOG_DEBUG("vmm_stack_data        = %p", vmm_stack_data);
-  HYPERPLATFORM_LOG_DEBUG("vmm_stack_base        = %p", vmm_stack_base);
-  HYPERPLATFORM_LOG_DEBUG("processor_data        = %p stored at %p",
+  HYPERPLATFORM_LOG_DEBUG("vmm_stack_region_base = %016Ix",
+                          vmm_stack_region_base);
+  HYPERPLATFORM_LOG_DEBUG("vmm_stack_data        = %016Ix", vmm_stack_data);
+  HYPERPLATFORM_LOG_DEBUG("vmm_stack_base        = %016Ix", vmm_stack_base);
+  HYPERPLATFORM_LOG_DEBUG("processor_data        = %p stored at %016Ix",
                           processor_data, vmm_stack_data);
-  HYPERPLATFORM_LOG_DEBUG("guest_stack_pointer   = %p", guest_stack_pointer);
-  HYPERPLATFORM_LOG_DEBUG("guest_inst_pointer    = %p",
+  HYPERPLATFORM_LOG_DEBUG("guest_stack_pointer   = %016Ix",
+                          guest_stack_pointer);
+  HYPERPLATFORM_LOG_DEBUG("guest_inst_pointer    = %016Ix",
                           guest_instruction_pointer);
   *reinterpret_cast<ULONG_PTR *>(vmm_stack_base) = MAXULONG_PTR;
   *reinterpret_cast<ProcessorData **>(vmm_stack_data) = processor_data;
@@ -510,8 +474,8 @@ _Use_decl_annotations_ static void VmpInitializeVm(
   // Do virtualize the processor
   VmpLaunchVm();
 
-// Here is not be executed with successful vmlaunch. Instead, the context
-// jumps to an address specified by guest_instruction_pointer.
+  // Here is not be executed with successful vmlaunch. Instead, the context
+  // jumps to an address specified by guest_instruction_pointer.
 
 ReturnFalseWithVmxOff:;
   __vmx_off();
@@ -535,16 +499,29 @@ _Use_decl_annotations_ static bool VmpEnterVmxMode(
   const Cr0 cr0_fixed0 = {UtilReadMsr(Msr::kIa32VmxCr0Fixed0)};
   const Cr0 cr0_fixed1 = {UtilReadMsr(Msr::kIa32VmxCr0Fixed1)};
   Cr0 cr0 = {__readcr0()};
+  Cr0 cr0_original = cr0;
   cr0.all &= cr0_fixed1.all;
   cr0.all |= cr0_fixed0.all;
   __writecr0(cr0.all);
 
+  HYPERPLATFORM_LOG_DEBUG("IA32_VMX_CR0_FIXED0   = %08Ix", cr0_fixed0.all);
+  HYPERPLATFORM_LOG_DEBUG("IA32_VMX_CR0_FIXED1   = %08Ix", cr0_fixed1.all);
+  HYPERPLATFORM_LOG_DEBUG("Original CR0          = %08Ix", cr0_original.all);
+  HYPERPLATFORM_LOG_DEBUG("Fixed CR0             = %08Ix", cr0.all);
+
+  // See: VMX-FIXED BITS IN CR4
   const Cr4 cr4_fixed0 = {UtilReadMsr(Msr::kIa32VmxCr4Fixed0)};
   const Cr4 cr4_fixed1 = {UtilReadMsr(Msr::kIa32VmxCr4Fixed1)};
   Cr4 cr4 = {__readcr4()};
+  Cr4 cr4_original = cr4;
   cr4.all &= cr4_fixed1.all;
   cr4.all |= cr4_fixed0.all;
   __writecr4(cr4.all);
+
+  HYPERPLATFORM_LOG_DEBUG("IA32_VMX_CR4_FIXED0   = %08Ix", cr4_fixed0.all);
+  HYPERPLATFORM_LOG_DEBUG("IA32_VMX_CR4_FIXED1   = %08Ix", cr4_fixed1.all);
+  HYPERPLATFORM_LOG_DEBUG("Original CR4          = %08Ix", cr4_original.all);
+  HYPERPLATFORM_LOG_DEBUG("Fixed CR4             = %08Ix", cr4.all);
 
   // Write a VMCS revision identifier
   const Ia32VmxBasicMsr vmx_basic_msr = {UtilReadMsr64(Msr::kIa32VmxBasic)};
@@ -598,9 +575,8 @@ _Use_decl_annotations_ static bool VmpSetupVmcs(
   __sidt(&idtr);
 
   // See: Algorithms for Determining VMX Capabilities
-  const auto use_true_msrs = Ia32VmxBasicMsr{
-      UtilReadMsr64(
-          Msr::kIa32VmxBasic)}.fields.vmx_capability_hint;
+  const auto use_true_msrs = Ia32VmxBasicMsr{UtilReadMsr64(Msr::kIa32VmxBasic)}
+                                 .fields.vmx_capability_hint;
 
   VmxVmEntryControls vm_entryctl_requested = {};
   vm_entryctl_requested.fields.load_debug_controls = true;
@@ -623,10 +599,7 @@ _Use_decl_annotations_ static bool VmpSetupVmcs(
                             vm_pinctl_requested.all)};
 
   VmxProcessorBasedControls vm_procctl_requested = {};
-  vm_procctl_requested.fields.invlpg_exiting = false;
-  vm_procctl_requested.fields.rdtsc_exiting = false;
   vm_procctl_requested.fields.cr3_load_exiting = true;
-  vm_procctl_requested.fields.cr8_load_exiting = false;  // NB: very frequent
   vm_procctl_requested.fields.mov_dr_exiting = true;
   vm_procctl_requested.fields.use_io_bitmaps = true;
   vm_procctl_requested.fields.use_msr_bitmaps = true;
@@ -641,9 +614,21 @@ _Use_decl_annotations_ static bool VmpSetupVmcs(
   vm_procctl2_requested.fields.descriptor_table_exiting = true;
   vm_procctl2_requested.fields.enable_rdtscp = true;  // for Win10
   vm_procctl2_requested.fields.enable_vpid = true;
+  vm_procctl2_requested.fields.enable_invpcid = true;        // for Win10
   vm_procctl2_requested.fields.enable_xsaves_xstors = true;  // for Win10
   VmxSecondaryProcessorBasedControls vm_procctl2 = {VmpAdjustControlValue(
       Msr::kIa32VmxProcBasedCtls2, vm_procctl2_requested.all)};
+
+  HYPERPLATFORM_LOG_DEBUG("VmEntryControls                  = %08x",
+                          vm_entryctl.all);
+  HYPERPLATFORM_LOG_DEBUG("VmExitControls                   = %08x",
+                          vm_exitctl.all);
+  HYPERPLATFORM_LOG_DEBUG("PinBasedControls                 = %08x",
+                          vm_pinctl.all);
+  HYPERPLATFORM_LOG_DEBUG("ProcessorBasedControls           = %08x",
+                          vm_procctl.all);
+  HYPERPLATFORM_LOG_DEBUG("SecondaryProcessorBasedControls  = %08x",
+                          vm_procctl2.all);
 
   // NOTE: Comment in any of those as needed
   const auto exception_bitmap =
@@ -657,6 +642,8 @@ _Use_decl_annotations_ static bool VmpSetupVmcs(
   // - Where a bit is not masked, the actual bit appears
   // VM-exit occurs when a guest modifies any of those fields
   Cr0 cr0_mask = {};
+  Cr0 cr0_shadow = {__readcr0()};
+
   Cr4 cr4_mask = {};
   Cr4 cr4_shadow = {__readcr4()};
   // For example, when we want to hide CR4.VMXE from the guest, comment in below
@@ -752,8 +739,8 @@ _Use_decl_annotations_ static bool VmpSetupVmcs(
   /* Natural-Width Control Fields */
   error |= UtilVmWrite(VmcsField::kCr0GuestHostMask, cr0_mask.all);
   error |= UtilVmWrite(VmcsField::kCr4GuestHostMask, cr4_mask.all);
-  error |= UtilVmWrite(VmcsField::kCr0ReadShadow, __readcr0());
-  error |= UtilVmWrite(VmcsField::kCr4ReadShadow, __readcr4());
+  error |= UtilVmWrite(VmcsField::kCr0ReadShadow, cr0_shadow.all);
+  error |= UtilVmWrite(VmcsField::kCr4ReadShadow, cr4_shadow.all);
 
   /* Natural-Width Guest-State Fields */
   error |= UtilVmWrite(VmcsField::kGuestCr0, __readcr0());
@@ -815,15 +802,16 @@ _Use_decl_annotations_ static void VmpLaunchVm() {
 
   auto error_code = UtilVmRead(VmcsField::kVmInstructionError);
   if (error_code) {
-    HYPERPLATFORM_LOG_WARN("VM_INSTRUCTION_ERROR = %d", error_code);
+    HYPERPLATFORM_LOG_WARN("VM_INSTRUCTION_ERROR = %Iu", error_code);
   }
+
   auto vmx_status = static_cast<VmxStatus>(__vmx_vmlaunch());
 
-  // Here is not be executed with successful vmlaunch. Instead, the context
+  // Here should not executed with successful vmlaunch. Instead, the context
   // jumps to an address specified by GUEST_RIP.
   if (vmx_status == VmxStatus::kErrorWithStatus) {
     error_code = UtilVmRead(VmcsField::kVmInstructionError);
-    HYPERPLATFORM_LOG_ERROR("VM_INSTRUCTION_ERROR = %d", error_code);
+    HYPERPLATFORM_LOG_ERROR("VM_INSTRUCTION_ERROR = %Iu", error_code);
   }
   HYPERPLATFORM_COMMON_DBG_BREAK();
 }
@@ -949,6 +937,11 @@ _Use_decl_annotations_ static NTSTATUS VmpStopVm(void *context) {
     return status;
   }
 
+  // Clear CR4.VMXE, as there is no reason to leave the bit after vmxoff
+  Cr4 cr4 = {__readcr4()};
+  cr4.fields.vmxe = false;
+  __writecr4(cr4.all);
+
   VmpFreeProcessorData(processor_data);
   return STATUS_SUCCESS;
 }
@@ -976,9 +969,6 @@ _Use_decl_annotations_ static void VmpFreeProcessorData(
   }
   if (processor_data->ept_data) {
     EptTermination(processor_data->ept_data);
-  }
-  if (processor_data->xsave_area) {
-    ExFreePoolWithTag(processor_data->xsave_area, kHyperPlatformCommonPoolTag);
   }
 
   VmpFreeSharedData(processor_data);

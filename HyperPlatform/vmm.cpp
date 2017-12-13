@@ -1,4 +1,4 @@
-// Copyright (c) 2015-2016, tandasat. All rights reserved.
+// Copyright (c) 2015-2017, Satoshi Tanda. All rights reserved.
 // Use of this source code is governed by a MIT-style license that can be
 // found in the LICENSE file.
 
@@ -145,10 +145,6 @@ static void VmmpIoWrapper(_In_ bool to_memory, _In_ bool is_string,
                           _In_ SIZE_T size_of_access, _In_ unsigned short port,
                           _Inout_ void *address, _In_ unsigned long count);
 
-static void VmmpSaveExtendedProcessorState(_Inout_ GuestContext *guest_context);
-
-static void VmmpRestoreExtendedProcessorState(_In_ GuestContext *guest_context);
-
 static void VmmpIndicateSuccessfulVmcall(_In_ GuestContext *guest_context);
 
 static void VmmpIndicateUnsuccessfulVmcall(_In_ GuestContext *guest_context);
@@ -200,12 +196,8 @@ _Use_decl_annotations_ bool __stdcall VmmVmExitHandler(VmmInitialStack *stack) {
                                 true};
   guest_context.gp_regs->sp = UtilVmRead(VmcsField::kGuestRsp);
 
-  VmmpSaveExtendedProcessorState(&guest_context);
-
   // Dispatch the current VM-exit event
   VmmpHandleVmExit(&guest_context);
-
-  VmmpRestoreExtendedProcessorState(&guest_context);
 
   // See: Guidelines for Use of the INVVPID Instruction, and Guidelines for Use
   // of the INVEPT Instruction
@@ -374,8 +366,9 @@ _Use_decl_annotations_ static void VmmpHandleException(
       const auto fault_address = UtilVmRead(VmcsField::kExitQualification);
 
       VmmpInjectInterruption(interruption_type, vector, true, fault_code.all);
-      HYPERPLATFORM_LOG_INFO_SAFE("GuestIp= %p, #PF Fault= %p Code= 0x%2x",
-                                  guest_context->ip, fault_address, fault_code);
+      HYPERPLATFORM_LOG_INFO_SAFE(
+          "GuestIp= %016Ix, #PF Fault= %016Ix Code= 0x%2x", guest_context->ip,
+          fault_address, fault_code.all);
       AsmWriteCR2(fault_address);
 
     } else if (vector == InterruptionVector::kGeneralProtectionException) {
@@ -384,7 +377,7 @@ _Use_decl_annotations_ static void VmmpHandleException(
           static_cast<ULONG32>(UtilVmRead(VmcsField::kVmExitIntrErrorCode));
 
       VmmpInjectInterruption(interruption_type, vector, true, error_code);
-      HYPERPLATFORM_LOG_INFO_SAFE("GuestIp= %p, #GP Code= 0x%2x",
+      HYPERPLATFORM_LOG_INFO_SAFE("GuestIp= %016Ix, #GP Code= 0x%2x",
                                   guest_context->ip, error_code);
 
     } else {
@@ -403,7 +396,7 @@ _Use_decl_annotations_ static void VmmpHandleException(
         return;
       }
       VmmpInjectInterruption(interruption_type, vector, false, 0);
-      HYPERPLATFORM_LOG_INFO_SAFE("GuestIp= %p, #BP ", guest_context->ip);
+      HYPERPLATFORM_LOG_INFO_SAFE("GuestIp= %016Ix, #BP ", guest_context->ip);
       UtilVmWrite(VmcsField::kVmEntryInstructionLen, 1);
 
     } else {
@@ -499,7 +492,7 @@ _Use_decl_annotations_ static void VmmpHandleMsrWriteAccess(
 // RDMSR and WRMSR
 _Use_decl_annotations_ static void VmmpHandleMsrAccess(
     GuestContext *guest_context, bool read_access) {
-  // Apply it for VMCS instead of a real MSR if a speficied MSR is either of
+  // Apply it for VMCS instead of a real MSR if a specified MSR is either of
   // them.
   const auto msr = static_cast<Msr>(guest_context->gp_regs->cx);
 
@@ -820,7 +813,7 @@ _Use_decl_annotations_ static void VmmpHandleIoPort(
       break;
   }
 
-  HYPERPLATFORM_LOG_DEBUG_SAFE("GuestIp= %p, Port= %04x, %s%s%s",
+  HYPERPLATFORM_LOG_DEBUG_SAFE("GuestIp= %016Ix, Port= %04x, %s%s%s",
                                guest_context->ip, port, (is_in ? "IN" : "OUT"),
                                (is_string ? "S" : ""),
                                (is_string ? suffix : ""));
@@ -937,9 +930,17 @@ _Use_decl_annotations_ static void VmmpHandleCrAccess(
           if (UtilIsX86Pae()) {
             UtilLoadPdptes(*register_used);
           }
+          // Under some circumstances MOV to CR3 is not *required* to flush TLB
+          // entries, but also NOT prohibited to do so. Therefore, we flush it
+          // all time.
+          // See: Operations that Invalidate TLBs and Paging-Structure Caches
           UtilInvvpidSingleContextExceptGlobal(
               static_cast<USHORT>(KeGetCurrentProcessorNumberEx(nullptr) + 1));
-          UtilVmWrite(VmcsField::kGuestCr3, *register_used);
+
+          // The MOV to CR3 does not modify the bit63 of CR3. Emulate this
+          // behavior.
+          // See: MOV�Move to/from Control Registers
+          UtilVmWrite(VmcsField::kGuestCr3, (*register_used & ~(1ULL << 63)));
           break;
         }
 
@@ -1011,7 +1012,7 @@ _Use_decl_annotations_ static void VmmpHandleCrAccess(
 // VMX instructions except for VMCALL
 _Use_decl_annotations_ static void VmmpHandleVmx(GuestContext *guest_context) {
   HYPERPLATFORM_PERFORMANCE_MEASURE_THIS_SCOPE();
-  // See "CONVENTIONS"
+  // See: CONVENTIONS
   guest_context->flag_reg.fields.cf = true;  // Error without status
   guest_context->flag_reg.fields.pf = false;
   guest_context->flag_reg.fields.af = false;
@@ -1146,60 +1147,60 @@ _Use_decl_annotations_ static ULONG_PTR *VmmpSelectRegister(
 
 // Dumps guest state VMCS fields
 /*_Use_decl_annotations_*/ static void VmmpDumpGuestState() {
-    // clang-format off
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest EsSelector   = %p", UtilVmRead(VmcsField::kGuestEsSelector));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest CsSelector   = %p", UtilVmRead(VmcsField::kGuestCsSelector));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest SsSelector   = %p", UtilVmRead(VmcsField::kGuestSsSelector));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest DsSelector   = %p", UtilVmRead(VmcsField::kGuestDsSelector));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest FsSelector   = %p", UtilVmRead(VmcsField::kGuestFsSelector));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest GsSelector   = %p", UtilVmRead(VmcsField::kGuestGsSelector));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest LdtrSelector = %p", UtilVmRead(VmcsField::kGuestLdtrSelector));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest TrSelector   = %p", UtilVmRead(VmcsField::kGuestTrSelector));
+  // clang-format off
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest EsSelector   = %016Ix", UtilVmRead(VmcsField::kGuestEsSelector));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest CsSelector   = %016Ix", UtilVmRead(VmcsField::kGuestCsSelector));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest SsSelector   = %016Ix", UtilVmRead(VmcsField::kGuestSsSelector));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest DsSelector   = %016Ix", UtilVmRead(VmcsField::kGuestDsSelector));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest FsSelector   = %016Ix", UtilVmRead(VmcsField::kGuestFsSelector));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest GsSelector   = %016Ix", UtilVmRead(VmcsField::kGuestGsSelector));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest LdtrSelector = %016Ix", UtilVmRead(VmcsField::kGuestLdtrSelector));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest TrSelector   = %016Ix", UtilVmRead(VmcsField::kGuestTrSelector));
 
     HYPERPLATFORM_LOG_DEBUG_SAFE("Guest Ia32Debugctl = %016llx", UtilVmRead64(VmcsField::kGuestIa32Debugctl));
 
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest EsLimit      = %p", UtilVmRead(VmcsField::kGuestEsLimit));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest CsLimit      = %p", UtilVmRead(VmcsField::kGuestCsLimit));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest SsLimit      = %p", UtilVmRead(VmcsField::kGuestSsLimit));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest DsLimit      = %p", UtilVmRead(VmcsField::kGuestDsLimit));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest FsLimit      = %p", UtilVmRead(VmcsField::kGuestFsLimit));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest GsLimit      = %p", UtilVmRead(VmcsField::kGuestGsLimit));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest LdtrLimit    = %p", UtilVmRead(VmcsField::kGuestLdtrLimit));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest TrLimit      = %p", UtilVmRead(VmcsField::kGuestTrLimit));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest GdtrLimit    = %p", UtilVmRead(VmcsField::kGuestGdtrLimit));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest IdtrLimit    = %p", UtilVmRead(VmcsField::kGuestIdtrLimit));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest EsArBytes    = %p", UtilVmRead(VmcsField::kGuestEsArBytes));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest CsArBytes    = %p", UtilVmRead(VmcsField::kGuestCsArBytes));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest SsArBytes    = %p", UtilVmRead(VmcsField::kGuestSsArBytes));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest DsArBytes    = %p", UtilVmRead(VmcsField::kGuestDsArBytes));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest FsArBytes    = %p", UtilVmRead(VmcsField::kGuestFsArBytes));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest GsArBytes    = %p", UtilVmRead(VmcsField::kGuestGsArBytes));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest LdtrArBytes  = %p", UtilVmRead(VmcsField::kGuestLdtrArBytes));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest TrArBytes    = %p", UtilVmRead(VmcsField::kGuestTrArBytes));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest SysenterCs   = %p", UtilVmRead(VmcsField::kGuestSysenterCs));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest EsLimit      = %016Ix", UtilVmRead(VmcsField::kGuestEsLimit));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest CsLimit      = %016Ix", UtilVmRead(VmcsField::kGuestCsLimit));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest SsLimit      = %016Ix", UtilVmRead(VmcsField::kGuestSsLimit));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest DsLimit      = %016Ix", UtilVmRead(VmcsField::kGuestDsLimit));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest FsLimit      = %016Ix", UtilVmRead(VmcsField::kGuestFsLimit));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest GsLimit      = %016Ix", UtilVmRead(VmcsField::kGuestGsLimit));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest LdtrLimit    = %016Ix", UtilVmRead(VmcsField::kGuestLdtrLimit));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest TrLimit      = %016Ix", UtilVmRead(VmcsField::kGuestTrLimit));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest GdtrLimit    = %016Ix", UtilVmRead(VmcsField::kGuestGdtrLimit));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest IdtrLimit    = %016Ix", UtilVmRead(VmcsField::kGuestIdtrLimit));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest EsArBytes    = %016Ix", UtilVmRead(VmcsField::kGuestEsArBytes));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest CsArBytes    = %016Ix", UtilVmRead(VmcsField::kGuestCsArBytes));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest SsArBytes    = %016Ix", UtilVmRead(VmcsField::kGuestSsArBytes));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest DsArBytes    = %016Ix", UtilVmRead(VmcsField::kGuestDsArBytes));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest FsArBytes    = %016Ix", UtilVmRead(VmcsField::kGuestFsArBytes));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest GsArBytes    = %016Ix", UtilVmRead(VmcsField::kGuestGsArBytes));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest LdtrArBytes  = %016Ix", UtilVmRead(VmcsField::kGuestLdtrArBytes));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest TrArBytes    = %016Ix", UtilVmRead(VmcsField::kGuestTrArBytes));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest SysenterCs   = %016Ix", UtilVmRead(VmcsField::kGuestSysenterCs));
 
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest Cr0          = %p", UtilVmRead(VmcsField::kGuestCr0));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest Cr3          = %p", UtilVmRead(VmcsField::kGuestCr3));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest Cr4          = %p", UtilVmRead(VmcsField::kGuestCr4));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest Cr0          = %016Ix", UtilVmRead(VmcsField::kGuestCr0));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest Cr3          = %016Ix", UtilVmRead(VmcsField::kGuestCr3));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest Cr4          = %016Ix", UtilVmRead(VmcsField::kGuestCr4));
 
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest EsBase       = %p", UtilVmRead(VmcsField::kGuestEsBase));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest CsBase       = %p", UtilVmRead(VmcsField::kGuestCsBase));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest SsBase       = %p", UtilVmRead(VmcsField::kGuestSsBase));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest DsBase       = %p", UtilVmRead(VmcsField::kGuestDsBase));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest FsBase       = %p", UtilVmRead(VmcsField::kGuestFsBase));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest GsBase       = %p", UtilVmRead(VmcsField::kGuestGsBase));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest EsBase       = %016Ix", UtilVmRead(VmcsField::kGuestEsBase));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest CsBase       = %016Ix", UtilVmRead(VmcsField::kGuestCsBase));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest SsBase       = %016Ix", UtilVmRead(VmcsField::kGuestSsBase));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest DsBase       = %016Ix", UtilVmRead(VmcsField::kGuestDsBase));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest FsBase       = %016Ix", UtilVmRead(VmcsField::kGuestFsBase));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest GsBase       = %016Ix", UtilVmRead(VmcsField::kGuestGsBase));
 
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest LdtrBase     = %p", UtilVmRead(VmcsField::kGuestLdtrBase));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest TrBase       = %p", UtilVmRead(VmcsField::kGuestTrBase));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest GdtrBase     = %p", UtilVmRead(VmcsField::kGuestGdtrBase));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest IdtrBase     = %p", UtilVmRead(VmcsField::kGuestIdtrBase));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest Dr7          = %p", UtilVmRead(VmcsField::kGuestDr7));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest Rsp          = %p", UtilVmRead(VmcsField::kGuestRsp));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest Rip          = %p", UtilVmRead(VmcsField::kGuestRip));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest Rflags       = %p", UtilVmRead(VmcsField::kGuestRflags));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest SysenterEsp  = %p", UtilVmRead(VmcsField::kGuestSysenterEsp));
-    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest SysenterEip  = %p", UtilVmRead(VmcsField::kGuestSysenterEip));
-    // clang-format on
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest LdtrBase     = %016Ix", UtilVmRead(VmcsField::kGuestLdtrBase));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest TrBase       = %016Ix", UtilVmRead(VmcsField::kGuestTrBase));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest GdtrBase     = %016Ix", UtilVmRead(VmcsField::kGuestGdtrBase));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest IdtrBase     = %016Ix", UtilVmRead(VmcsField::kGuestIdtrBase));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest Dr7          = %016Ix", UtilVmRead(VmcsField::kGuestDr7));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest Rsp          = %016Ix", UtilVmRead(VmcsField::kGuestRsp));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest Rip          = %016Ix", UtilVmRead(VmcsField::kGuestRip));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest Rflags       = %016Ix", UtilVmRead(VmcsField::kGuestRflags));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest SysenterEsp  = %016Ix", UtilVmRead(VmcsField::kGuestSysenterEsp));
+    HYPERPLATFORM_LOG_DEBUG_SAFE("Guest SysenterEip  = %016Ix", UtilVmRead(VmcsField::kGuestSysenterEip));
+  // clang-format on
 }
 
 // Advances guest's IP to the next instruction
@@ -1228,54 +1229,10 @@ _Use_decl_annotations_ void __stdcall VmmVmxFailureHandler(
       HyperPlatformBugCheck::kCriticalVmxInstructionFailure, vmx_error, 0, 0);
 }
 
-// Saves all supported user state components (x87, SSE, AVX states)
-_Use_decl_annotations_ static void VmmpSaveExtendedProcessorState(
-    GuestContext *guest_context) {
-  // Clear the TS flag temporality since XSAVE/XRSTOR raise #NM
-  Cr0 cr0 = {__readcr0()};
-  const auto old_cr0 = cr0;
-  cr0.fields.ts = false;
-  __writecr0(cr0.all);
-  if (guest_context->stack->processor_data->xsave_inst_mask) {
-    _xsave(guest_context->stack->processor_data->xsave_area,
-           guest_context->stack->processor_data->xsave_inst_mask);
-  } else {
-    // Advances an address up to 15 bytes to be 16-byte aligned
-    auto alignment = reinterpret_cast<ULONG_PTR>(
-                         guest_context->stack->processor_data->fxsave_area) %
-                     16;
-    alignment = (alignment) ? 16 - alignment : 0;
-    _fxsave(guest_context->stack->processor_data->fxsave_area + alignment);
-  }
-  __writecr0(old_cr0.all);
-}
-
-// Restores all supported user state components (x87, SSE, AVX states)
-_Use_decl_annotations_ static void VmmpRestoreExtendedProcessorState(
-    GuestContext *guest_context) {
-  // Clear the TS flag temporality since XSAVE/XRSTOR raise #NM
-  Cr0 cr0 = {__readcr0()};
-  const auto old_cr0 = cr0;
-  cr0.fields.ts = false;
-  __writecr0(cr0.all);
-  if (guest_context->stack->processor_data->xsave_inst_mask) {
-    _xrstor(guest_context->stack->processor_data->xsave_area,
-            guest_context->stack->processor_data->xsave_inst_mask);
-  } else {
-    // Advances an address up to 15 bytes to be 16-byte aligned
-    auto alignment = reinterpret_cast<ULONG_PTR>(
-                         guest_context->stack->processor_data->fxsave_area) %
-                     16;
-    alignment = (alignment) ? 16 - alignment : 0;
-    _fxrstor(guest_context->stack->processor_data->fxsave_area + alignment);
-  }
-  __writecr0(old_cr0.all);
-}
-
 // Indicates successful VMCALL
 _Use_decl_annotations_ static void VmmpIndicateSuccessfulVmcall(
     GuestContext *guest_context) {
-  // See "CONVENTIONS"
+  // See: CONVENTIONS
   guest_context->flag_reg.fields.cf = false;
   guest_context->flag_reg.fields.pf = false;
   guest_context->flag_reg.fields.af = false;
@@ -1328,7 +1285,7 @@ _Use_decl_annotations_ static void VmmpHandleVmCallTermination(
 
   // Since the flag register is overwritten after VMXOFF, we should manually
   // indicates that VMCALL was successful by clearing those flags.
-  // See "CONVENTIONS"
+  // See: CONVENTIONS
   guest_context->flag_reg.fields.cf = false;
   guest_context->flag_reg.fields.pf = false;
   guest_context->flag_reg.fields.af = false;

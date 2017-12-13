@@ -1,4 +1,4 @@
-// Copyright (c) 2015-2016, tandasat. All rights reserved.
+// Copyright (c) 2015-2017, Satoshi Tanda. All rights reserved.
 // Use of this source code is governed by a MIT-style license that can be
 // found in the LICENSE file.
 
@@ -58,6 +58,9 @@ _IRQL_requires_max_(PASSIVE_LEVEL) bool EptIsEptAvailable();
 /// @param ept_data   EptData to get an EPT pointer
 /// @return An EPT pointer
 ULONG64 EptGetEptPointer(_In_ EptData* ept_data);
+
+/// Reads and stores all MTRRs to set a correct memory type for EPT
+_IRQL_requires_max_(PASSIVE_LEVEL) void EptInitializeMtrrEntries();
 
 /// Builds EPT, allocates pre-allocated entires, initializes and returns EptData
 /// @return An allocated EptData on success, or nullptr

@@ -1,4 +1,4 @@
-; Copyright (c) 2015-2016, tandasat. All rights reserved.
+; Copyright (c) 2015-2017, Satoshi Tanda. All rights reserved.
 ; Use of this source code is governed by a MIT-style license that can be
 ; found in the LICENSE file.
 
@@ -7,6 +7,8 @@
 ;
 .686p
 .model flat, stdcall
+.MMX
+.XMM
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;
@@ -92,10 +94,38 @@ AsmVmmEntryPoint PROC
     ; No need to save the flag registers since it is restored from the VMCS at
     ; the time of vmresume.
     pushad                  ; -4 * 8
+    mov eax, esp
 
-    mov ecx, esp
-    push ecx
+    ; save volatile XMM registers
+    sub esp, 68h            ; +8 for alignment
+    mov ecx, cr0
+    mov edx, ecx            ; save original CR0
+    and cl, 0f1h            ; clear MP, EM, TS bits for floating point access
+    mov cr0, ecx            ; update CR0
+    movaps xmmword ptr [esp +  0h], xmm0
+    movaps xmmword ptr [esp + 10h], xmm1
+    movaps xmmword ptr [esp + 20h], xmm2
+    movaps xmmword ptr [esp + 30h], xmm3
+    movaps xmmword ptr [esp + 40h], xmm4
+    movaps xmmword ptr [esp + 50h], xmm5
+    mov cr0, edx            ; restore the original CR0
+
+    push eax
     call VmmVmExitHandler@4 ; bool vm_continue = VmmVmExitHandler(guest_context);
+
+    ; restore XMM registers
+    mov ecx, cr0
+    mov edx, ecx            ; save original CR0
+    and cl, 0f1h            ; clear MP, EM, TS bits for floating point access
+    mov cr0, ecx            ; update CR0
+    movaps xmm0, xmmword ptr [esp +  0h]
+    movaps xmm1, xmmword ptr [esp + 10h]
+    movaps xmm2, xmmword ptr [esp + 20h]
+    movaps xmm3, xmmword ptr [esp + 30h]
+    movaps xmm4, xmmword ptr [esp + 40h]
+    movaps xmm5, xmmword ptr [esp + 50h]
+    mov cr0, edx            ; restore the original CR0
+    add esp, 68h            ; +8 for alignment
 
     test al, al
     jz exitVm               ; if (!vm_continue) jmp exitVm
