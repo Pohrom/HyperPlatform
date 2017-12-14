@@ -328,7 +328,8 @@ _Use_decl_annotations_ static NTSTATUS VmpStartVm(void *context) {
   HYPERPLATFORM_LOG_INFO("Initializing VMX for the processor %d.",
                          KeGetCurrentProcessorNumberEx(nullptr));
   const auto ok = AsmInitializeVm(VmpInitializeVm, context);
-  NT_ASSERT(VmpIsHyperPlatformInstalled() == ok);
+  // Disable Success Assert
+  // NT_ASSERT(VmpIsHyperPlatformInstalled() == ok);
   if (!ok) {
     return STATUS_UNSUCCESSFUL;
   }
@@ -876,7 +877,8 @@ _Use_decl_annotations_ void VmTermination() {
   } else {
     HYPERPLATFORM_LOG_WARN("The VMM has not been uninstalled (%08x).", status);
   }
-  NT_ASSERT(!VmpIsHyperPlatformInstalled());
+  // Disable Success Assert
+  // NT_ASSERT(!VmpIsHyperPlatformInstalled());
 }
 
 // Stops virtualization through a hypercall and frees all related memory
